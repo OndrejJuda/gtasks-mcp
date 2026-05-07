@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { authenticate } from "@google-cloud/local-auth";
+import { fileURLToPath } from "url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -260,14 +261,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 const credentialsPath = path.join(
-  path.dirname(new URL(import.meta.url).pathname),
+  path.dirname(fileURLToPath(import.meta.url)),
   "../.gtasks-server-credentials.json",
 );
 
 async function authenticateAndSaveCredentials() {
   console.log("Launching auth flow…");
   const p = path.join(
-    path.dirname(new URL(import.meta.url).pathname),
+    path.dirname(fileURLToPath(import.meta.url)),
     "../gcp-oauth.keys.json",
   );
 
