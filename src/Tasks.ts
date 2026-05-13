@@ -69,6 +69,8 @@ export class TaskResources {
     const pageSize = 10;
     const params: any = {
       maxResults: pageSize,
+      showCompleted: true,
+      showHidden: true
     };
 
     if (request.params?.cursor) {
@@ -125,6 +127,8 @@ export class TaskActions {
           const tasksResponse = await tasks.tasks.list({
             tasklist: taskList.id,
             maxResults: MAX_TASK_RESULTS,
+            showCompleted: true,
+            showHidden: true,
           });
 
           const items = tasksResponse.data.items || [];
