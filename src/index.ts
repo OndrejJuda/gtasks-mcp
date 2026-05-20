@@ -289,9 +289,23 @@ async function loadCredentialsAndRunServer() {
     process.exit(1);
   }
 
+  const keysPath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../gcp-oauth.keys.json",
+  );
+  const keys = JSON.parse(fs.readFileSync(keysPath, "utf-8"));
+  const { client_id, client_secret } = keys.installed ?? keys.web;
+
   const credentials = JSON.parse(fs.readFileSync(credentialsPath, "utf-8"));
-  const auth = new google.auth.OAuth2();
+  const auth = new google.auth.OAuth2(client_id, client_secret, "http://localhost");
   auth.setCredentials(credentials);
+
+  // Persist refreshed tokens automatically
+  auth.on("tokens", (tokens) => {
+    const current = JSON.parse(fs.readFileSync(credentialsPath, "utf-8"));
+    fs.writeFileSync(credentialsPath, JSON.stringify({ ...current, ...tokens }));
+  });
+
   google.options({ auth });
 
   const transport = new StdioServerTransport();
