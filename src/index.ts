@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import { authenticate } from "@google-cloud/local-auth";
 import { fileURLToPath } from "url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 
@@ -12,11 +11,13 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import fs from "fs";
-import { google, tasks_v1 } from "googleapis";
+import { tasks as createTasks, auth as googleAuth, tasks_v1 } from "@googleapis/tasks";
 import path from "path";
 import { TaskActions, TaskResources } from "./Tasks.js";
 
-const tasks = google.tasks("v1");
+// Initialized in loadCredentialsAndRunServer() before the transport connects,
+// so it is always set by the time any request handler runs.
+let tasks: tasks_v1.Tasks;
 
 const server = new Server(
   {
@@ -266,6 +267,10 @@ const credentialsPath = path.join(
 );
 
 async function authenticateAndSaveCredentials() {
+  // Heavy dependency: only loaded on the manual `auth` code path, never on
+  // normal server startup, so it can't slow down the MCP initialize handshake.
+  const { authenticate } = await import("@google-cloud/local-auth");
+
   console.log("Launching auth flow…");
   const p = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -297,7 +302,7 @@ async function loadCredentialsAndRunServer() {
   const { client_id, client_secret } = keys.installed ?? keys.web;
 
   const credentials = JSON.parse(fs.readFileSync(credentialsPath, "utf-8"));
-  const auth = new google.auth.OAuth2(client_id, client_secret, "http://localhost");
+  const auth = new googleAuth.OAuth2(client_id, client_secret, "http://localhost");
   auth.setCredentials(credentials);
 
   // Persist refreshed tokens automatically
@@ -306,7 +311,7 @@ async function loadCredentialsAndRunServer() {
     fs.writeFileSync(credentialsPath, JSON.stringify({ ...current, ...tokens }));
   });
 
-  google.options({ auth });
+  tasks = createTasks({ version: "v1", auth });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
