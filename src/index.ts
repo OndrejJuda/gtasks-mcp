@@ -95,13 +95,55 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "list",
-        description: "List all tasks in Google Tasks",
+        description:
+          "List tasks in Google Tasks with optional server-side filtering. " +
+          "Prefer the filters below over pulling everything and filtering afterwards. " +
+          "Within one call the filters are combined with AND, so 'due this week OR " +
+          "completed this week' is two calls unioned by task ID. Dates are RFC 3339 " +
+          "(YYYY-MM-DD or full ISO 8601). Task lists are drained across all pages.",
         inputSchema: {
           type: "object",
           properties: {
-            cursor: {
+            taskListId: {
               type: "string",
-              description: "Cursor for pagination",
+              description: "Only query this one task list (default: all lists)",
+            },
+            excludeTaskListId: {
+              type: "string",
+              description: "Skip this task list (e.g. to exclude a work list)",
+            },
+            dueMin: {
+              type: "string",
+              description: "Lower bound (inclusive) for the task due date, RFC 3339",
+            },
+            dueMax: {
+              type: "string",
+              description: "Upper bound for the task due date, RFC 3339",
+            },
+            completedMin: {
+              type: "string",
+              description:
+                "Lower bound for the completion date, RFC 3339 (implies completed tasks)",
+            },
+            completedMax: {
+              type: "string",
+              description: "Upper bound for the completion date, RFC 3339",
+            },
+            updatedMin: {
+              type: "string",
+              description: "Only tasks updated at or after this time, RFC 3339",
+            },
+            showCompleted: {
+              type: "boolean",
+              description: "Include completed tasks (default true)",
+            },
+            showHidden: {
+              type: "boolean",
+              description: "Include hidden tasks (default true)",
+            },
+            showDeleted: {
+              type: "boolean",
+              description: "Include deleted tasks (default false)",
             },
           },
         },

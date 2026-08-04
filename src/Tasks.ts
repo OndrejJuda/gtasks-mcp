@@ -26,6 +26,29 @@ export function normalizeDueDate(due: string | undefined): string | undefined {
   return `${year}-${month}-${day}T00:00:00.000Z`;
 }
 
+/**
+ * Normalize an arbitrary date/timestamp to full RFC 3339 for the Google Tasks
+ * API range filters (dueMin/dueMax, completedMin/completedMax, updatedMin).
+ * Unlike normalizeDueDate this preserves the time portion, so callers can pass
+ * precise window boundaries (e.g. end-of-day "2026-07-05T23:59:59Z").
+ */
+export function toRFC3339(value: string, label = "date"): string {
+  const parsed = new Date(value);
+  if (isNaN(parsed.getTime())) {
+    throw new Error(
+      `Invalid ${label} value: "${value}". Use YYYY-MM-DD or ISO 8601 format.`,
+    );
+  }
+  return parsed.toISOString();
+}
+
+/** A task paired with the list it lives in, so the list name survives merging. */
+export interface TaskWithList {
+  task: tasks_v1.Schema$Task;
+  listId: string;
+  listTitle: string;
+}
+
 export class TaskResources {
   static async read(request: ReadResourceRequest, tasks: tasks_v1.Tasks) {
     const taskId = request.params.uri.replace("gtasks:///", "");
@@ -102,37 +125,81 @@ export class TaskResources {
 }
 
 export class TaskActions {
-  private static formatTask(task: tasks_v1.Schema$Task) {
-    return `${task.title}\n (Due: ${task.due || "Not set"}) - Notes: ${task.notes} - ID: ${task.id} - Status: ${task.status} - URI: ${task.selfLink} - Hidden: ${task.hidden} - Parent: ${task.parent} - Deleted?: ${task.deleted} - Completed Date: ${task.completed} - Position: ${task.position} - Updated Date: ${task.updated} - ETag: ${task.etag} - Links: ${task.links} - Kind: ${task.kind}}`;
+  private static formatTask({ task, listTitle }: TaskWithList) {
+    return `${task.title}\n (List: ${listTitle} - Due: ${task.due || "Not set"}) - Notes: ${task.notes} - ID: ${task.id} - Status: ${task.status} - URI: ${task.selfLink} - Parent: ${task.parent} - Completed Date: ${task.completed} - Updated Date: ${task.updated}`;
   }
 
-  private static formatTaskList(taskList: tasks_v1.Schema$Task[]) {
-    return taskList.map((task) => this.formatTask(task)).join("\n");
+  private static formatTaskList(taskList: TaskWithList[]) {
+    return taskList.map((item) => this.formatTask(item)).join("\n");
   }
 
-  private static async _list(request: CallToolRequest, tasks: tasks_v1.Tasks) {
+  /**
+   * Fetch tasks with optional server-side filtering. Instead of always pulling
+   * every task and filtering client-side, the caller can pass Google Tasks API
+   * filters (dueMin/dueMax, completedMin/completedMax, updatedMin, show*) which
+   * the API applies before returning — so only matching tasks come over the wire.
+   *
+   * Note on semantics: within a single call the API ANDs the filters together.
+   * "Due this week OR completed this week" is therefore two calls, unioned by id.
+   */
+  private static async _list(
+    request: CallToolRequest,
+    tasks: tasks_v1.Tasks,
+  ): Promise<TaskWithList[]> {
+    const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+
+    // Build the passthrough filter params for tasks.tasks.list.
+    const listParams: Record<string, unknown> = {
+      maxResults: MAX_TASK_RESULTS,
+      showCompleted:
+        args.showCompleted === undefined ? true : Boolean(args.showCompleted),
+      showHidden: args.showHidden === undefined ? true : Boolean(args.showHidden),
+    };
+    if (args.showDeleted !== undefined)
+      listParams.showDeleted = Boolean(args.showDeleted);
+    if (args.dueMin) listParams.dueMin = toRFC3339(args.dueMin as string, "dueMin");
+    if (args.dueMax) listParams.dueMax = toRFC3339(args.dueMax as string, "dueMax");
+    if (args.completedMin)
+      listParams.completedMin = toRFC3339(args.completedMin as string, "completedMin");
+    if (args.completedMax)
+      listParams.completedMax = toRFC3339(args.completedMax as string, "completedMax");
+    if (args.updatedMin)
+      listParams.updatedMin = toRFC3339(args.updatedMin as string, "updatedMin");
+
+    // Resolve which lists to query. We always fetch tasklists once so we can
+    // attach the list title to each task and honour include/exclude filters.
     const taskListsResponse = await tasks.tasklists.list({
       maxResults: MAX_TASK_RESULTS,
     });
+    let taskLists = taskListsResponse.data.items || [];
+    if (args.taskListId)
+      taskLists = taskLists.filter((l) => l.id === args.taskListId);
+    if (args.excludeTaskListId)
+      taskLists = taskLists.filter((l) => l.id !== args.excludeTaskListId);
 
-    const taskLists = taskListsResponse.data.items || [];
-    let allTasks: tasks_v1.Schema$Task[] = [];
+    const allTasks: TaskWithList[] = [];
 
     for (const taskList of taskLists) {
-      if (taskList.id) {
-        try {
+      if (!taskList.id) continue;
+      try {
+        let pageToken: string | undefined = undefined;
+        do {
           const tasksResponse = await tasks.tasks.list({
             tasklist: taskList.id,
-            maxResults: MAX_TASK_RESULTS,
-            showCompleted: true,
-            showHidden: true,
+            ...listParams,
+            pageToken,
           });
-
-          const items = tasksResponse.data.items || [];
-          allTasks = allTasks.concat(items);
-        } catch (error) {
-          console.error(`Error fetching tasks for list ${taskList.id}:`, error);
-        }
+          for (const task of tasksResponse.data.items || []) {
+            allTasks.push({
+              task,
+              listId: taskList.id,
+              listTitle: taskList.title || taskList.id,
+            });
+          }
+          pageToken = tasksResponse.data.nextPageToken || undefined;
+        } while (pageToken);
+      } catch (error) {
+        console.error(`Error fetching tasks for list ${taskList.id}:`, error);
       }
     }
     return allTasks;
@@ -259,7 +326,7 @@ export class TaskActions {
 
     const allTasks = await this._list(request, tasks);
     const filteredItems = allTasks.filter(
-      (task) =>
+      ({ task }) =>
         task.title?.toLowerCase().includes(userQuery.toLowerCase()) ||
         task.notes?.toLowerCase().includes(userQuery.toLowerCase()),
     );

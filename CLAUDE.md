@@ -63,6 +63,18 @@ Výsledek: `initialize` handshake za ~2 s místo potenciálních >60 s.
 > Pozn.: grep na „googleapis" pořád najde shody v `src/` — to je jen substring importu
 > `@googleapis/tasks`, ne stará závislost. Ta je z `package.json` odebraná.
 
+## Server-side filtrování v `list` toolu
+
+`list` posílá filtry přímo na Google Tasks API — netahej všechno a nefiltruj v klientovi
+(Ondřej má 150+ tasků). Parametry (vše RFC 3339, `YYYY-MM-DD` i plné ISO 8601):
+`dueMin`/`dueMax`, `completedMin`/`completedMax`, `updatedMin`, `showCompleted`/`showHidden`/
+`showDeleted`, `taskListId` (jen jeden list), `excludeTaskListId` (vynech list, např. PPG).
+V jednom volání se filtry **ANDují** → „due tento týden OR completed tento týden" jsou dvě
+volání sloučená podle ID. Každý list se stránkuje do konce (`nextPageToken`). Výstup má na
+řádku `List:` název listu (dřív se ztrácel při slévání). Implementace: `_list` v `Tasks.ts`,
+schema v `index.ts`. Hranice normalizuje `toRFC3339` (na rozdíl od `normalizeDueDate`
+zachová čas, ne jen datum).
+
 ## Jak otestovat změny
 
 `bun run src/index.ts` mluví MCP protokolem po stdio. Rychlý smoke test (spawn + initialize +
